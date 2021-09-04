@@ -1,23 +1,24 @@
 #![allow(unused)]
 
 use image;
-use image::imageops::FilterType;
+use image::io::Reader as ImageReader;
 use libc::{ioctl, winsize, STDOUT_FILENO, TIOCGWINSZ};
-use std::io::{stdout, Write};
+use rayon::prelude::*;
+use std::fs::{self, File};
+use std::io::{stdout, BufWriter, Write};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
-use std::{fs::File, mem, os::unix::io::IntoRawFd};
+use std::{mem, os::unix::io::IntoRawFd};
 
-use image::io::Reader as ImageReader;
-
+const SKIP: u64 = 1;
 // 動画のFPS
 const FPS: u64 = 30;
 // 画像のパス
-const IMAGE_PATH: &str = "/home/maillein/Programs/bad_apple/images";
+const IMAGE_PATH: &str = "/home/maillein/Programs/bad_apple/no_no_no_true";
 // 画像の横幅
 const WIDTH: u64 = 480;
 // 画像の縦幅
-const HEIGHT: u64 = 360;
+const HEIGHT: u64 = 270;
 // 画像の横方向の分割数
 const DIVISION_W: u64 = WIDTH / 5;
 // 画像の縦方向の分割数
@@ -40,59 +41,68 @@ pub fn terminal_size() -> Option<winsize> {
     }
 }
 
+pub fn true_color(c: &[u8]) -> String {
+    format!("\x1b[38;2;{:>03};{:>03};{:>03}m", c[0], c[1], c[2])
+}
+
 fn main() {
     // １フレームあたりの時間（ナノ秒）
-    let time_per_flame = Duration::from_nanos(1_000_000_000 / FPS);
+    let time_per_flame = Duration::from_nanos(1_000_000_000 / FPS * SKIP);
     let (mut width, mut height) = if let Some(ws) = terminal_size() {
         (ws.ws_col as u64, ws.ws_row as u64)
     } else {
         (DIVISION_W, DIVISION_H)
     };
-    if width > height * 8 / 3 {
-        width = height * 8 / 3;
+    if width > height * 32 / 9 {
+        width = height * 32 / 9;
     } else {
-        height = width * 3 / 8;
+        height = width * 9 / 32;
     }
 
     let out = stdout();
-    let mut out = out.lock();
+    // let mut out = BufWriter::new(out.lock());
+    let mut buf_size = (width * 25) as usize * (height + 10) as usize;
+    let mut out = BufWriter::with_capacity(buf_size, out.lock());
+    let mut files: Vec<_> = {
+        fs::read_dir(IMAGE_PATH)
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+    };
+    files.sort_by_key(|dir| dir.path());
 
     // １回のループにつき１枚処理する
-    'running: for image_number in 1..=6572 {
+    for (flame, file) in files.iter().enumerate() {
+        if flame as u64 % SKIP > 0 {
+            continue;
+        }
         let start_time = Instant::now();
-        //         Command::new("clear").spawn().unwrap();
-        let mut colors = vec![vec![0u32; width as usize]; height as usize];
-        let mut bufs = vec![String::with_capacity(width as usize); height as usize];
         let image = {
-            ImageReader::open(format!("{}/{:>04}.png", IMAGE_PATH, image_number).as_str())
+            ImageReader::open(file.path().as_path())
                 .unwrap()
                 .decode()
                 .unwrap()
-                .resize_exact(width as u32, height as u32, FilterType::Nearest)
-                .to_luma8()
+                .resize_exact(
+                    width as u32,
+                    height as u32,
+                    image::imageops::FilterType::Nearest,
+                )
+                .to_rgb8()
         };
+        out.write(b"\x1b[H").unwrap();
+        out.write(b"\x1b[40m").unwrap();
         image
             .enumerate_pixels()
-            .collect::<Vec<(u32, u32, &image::Luma<u8>)>>()
+            .collect::<Vec<(u32, u32, &image::Rgb<u8>)>>()
             .iter()
-            .for_each(|(x, y, pixel)| {
-                colors[*y as usize][*x as usize] += (pixel.0)[0] as u32;
+            .for_each(|(x, y, &pixel)| {
+                out.write_fmt(format_args!("{}@", true_color(&pixel.0)));
+                if *x == width as u32 - 1 {
+                    out.write(b"\n");
+                }
             });
 
-        write!(out, "\x1b[2J");
-        // write!(out, "\x1b[{}F", height).unwrap();
-        for h in 0..height as usize {
-            for w in 0..width as usize {
-                if colors[h][w] > 128 {
-                    bufs[h] += "@";
-                } else {
-                    bufs[h] += " ";
-                }
-            }
-        }
-        for s in bufs {
-            write!(out, "{}\n", s).unwrap();
-        }
+        out.flush().unwrap();
 
         // ループ開始時からの経過時間
         let passed_time = start_time.elapsed();
@@ -101,4 +111,6 @@ fn main() {
             sleep(time_per_flame - passed_time);
         }
     }
+    out.write(b"\x1b[0m");
+    out.flush();
 }
