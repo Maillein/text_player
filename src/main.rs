@@ -14,7 +14,7 @@ const SKIP: u64 = 1;
 // 動画のFPS
 const FPS: u64 = 30;
 // 画像のパス
-const IMAGE_PATH: &str = "/home/maillein/Programs/bad_apple/no_no_no_true";
+const IMAGE_PATH: &str = "/home/maillein/Programs/bad_apple/no_no_no_original";
 // 画像の横幅
 const WIDTH: u64 = 480;
 // 画像の縦幅
